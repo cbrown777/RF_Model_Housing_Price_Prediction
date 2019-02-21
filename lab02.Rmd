@@ -1,0 +1,375 @@
+---
+title: "Lab 2"
+author: "Connor Brown"
+output: pdf_document
+---
+
+## Basic R Skills
+
+First, install the package `testthat` (a widely accepted testing suite for R) from https://github.com/r-lib/testthat using `pacman`. If you are using Windows, this will be a long install, but you have to go through it for some of the stuff we are doing in class. LINUX (or MAC) is preferred for coding. If you can't get it to work, install this package from CRAN (still using `pacman`), but this is not recommended long term.
+
+```{r}
+if (!require("pacman")){install.packages("pacman")} #installs pacman if necessary but does not load it!
+pacman::p_load(testthat)
+```
+
+* Use the `seq` function to create vector `v` consisting of all numbers from -100 to 100. 
+
+```{r}
+
+v = seq(-100, 100)
+v
+
+```
+
+Test using the following code:
+
+```{r}
+
+expect_equal(v, -100 : 100)
+
+```
+
+If there are any errors, the `expect_equal` function will tell you about them. If there are no errors, then it will be silent.
+
+* Create a function `my_reverse` which takes as required input a vector and returns the vector in reverse where the first entry is the last entry, etc. No function calls are allowed inside your function (otherwise that would defeat the purpose of the exercise).
+
+```{r}
+
+my_reverse = function(inputVector){
+  
+  #Makes empty vector the same size as input vector
+  reverseVector = rep(NA, length(inputVector))     
+  
+  #Loops from 1 : size of input vector
+  for (i in seq(1, length(inputVector))){     
+     #iterates up in new vector, iterates down in input vector
+     reverseVector[i] = inputVector[(length(inputVector)+1) - i] 
+  }
+  
+  #returns new vector
+  reverseVector                              
+}
+
+```
+
+Test using the following code:
+
+```{r}
+
+expect_equal(my_reverse(c("A", "B", "C")), c("C", "B", "A"))
+expect_equal(my_reverse(v), rev(v))
+```
+
+* Let `n = 50`. Create a nxn matrix `R` of exactly 50% entries 0's, 25% 1's 25% 2's in random locations.
+
+```{r}
+n = 50
+
+#Creates vector w/50% entries 0's, 25% 1's, 25% 2's randomly ordered
+f = sample(c(rep(0, 0.5*(n*n)), rep(1, 0.25*(n*n)), rep(2, 0.25*(n*n))))
+
+#Creates matrix with f vector as input for nxn matrix
+R = matrix(f, nrow = n, ncol = n)
+R
+```
+
+Test using the following and write two more tests as specified below:
+
+```{r}
+expect_equal(dim(R), c(n, n))
+
+
+#Test that the only unique values are 0, 1, 2
+
+#Vectorizes the matrix R
+vector_R = c(R)          
+#Passes unique values in R to the vector
+unique_R_values = sort(unique(vector_R))
+#Tests to see if the 2 vectors are equal
+expect_equal(unique_R_values, c(0, 1, 2)) 
+
+
+
+#Test that there are exactly 625 2's
+
+#Makes table of number of unique values in R
+summary_of_R = table(R)      
+summary_of_R
+#Converts table to dataframe
+summary_of_R_asDF = data.frame(summary_of_R) 
+summary_of_R_asDF
+
+#Passes # of 2's into variable, "num_2s"
+num_2s = summary_of_R_asDF$Freq[2] 
+
+expect_equal(num_2s, 625)
+```
+
+* Randomly punch holes (i.e. `NA`) values in this matrix so that approximately 30% of the entries are missing.
+
+```{r}
+#Creates vector w/~30% 1's
+NA_Vector = rbinom(n*n, 1, prob = .3)   
+NA_Vector
+
+#Replaces the 1's in NA_Vector w/NA's, fills the rest of the vector w/values from the original R, and makes a matrix from the vector.
+R = matrix(ifelse(NA_Vector == 1, NA, R), n, n) 
+R
+
+table(R)
+```
+
+Use the testthat library to test that this worked correctly by ensuring the number of missing entries is between the 0.5%ile and 99.5%ile of the appropriate binomial.
+
+```{r}
+
+NA_Count = 0
+
+#Counts the # of NA's in R, stores it in NA_Count
+for(i in R){
+  if(is.na(i)){
+    NA_Count = NA_Count + 1
+  }
+}
+
+if(expect_lt(NA_Count, qbinom(.995, n*n, 0.3)) & expect_gt(NA_Count, qbinom(.005, n*n, 0.3))){
+  cat("The number of missing entries is between the 0.5%ile and 99.5%ile of the appropriate binomial.")
+} else{
+  cat("The number of missing entries is NOT between the 0.5%ile and 99.5%ile of the appropriate binomial.")
+}
+
+
+
+
+```
+
+* Sort the rows matrix `R` by the largest row sum to lowest. Be careful about the NA's!
+
+```{r}
+R
+
+#Creates empty vector to store row sums
+row_Sums = rep(NA, nrow(R))  
+
+#Stores all 50 row sums in vector row_Sums
+for (i in (1:nrow(R))){
+   row_Sums[i] = sum(R[i,], na.rm = TRUE)
+}
+
+#Assigns the row sums as the names of the rows
+row.names(R) = row_Sums
+
+#Orders the row names by decreasing value, and creates new matrix
+R = R[order(rownames(R), decreasing = TRUE),]
+
+R
+```
+
+Test using the following code.
+
+```{r}
+for (i in 2 : n){
+  expect_gte(sum(R[i - 1, ], na.rm = TRUE), sum(R[i, ], na.rm = TRUE))
+}
+```
+
+* We will now learn the `apply` function. This is a handy function that saves writing for loops which should be eschewed in R. Use the apply function to compute a vector whose entries are the standard deviation of each row. Use the apply function to compute a vector whose entries are the standard deviation of each column. Be careful about the NA's!
+
+```{r}
+
+sd_Of_Rows = apply(R, 1, sd, na.rm = TRUE)
+sd_Of_Columns = apply(R, 2, sd, na.rm = TRUE)
+
+```
+
+* Use the `apply` function to compute a vector whose entries are the count of entries that are 1 or 2 in each column. Try to do this in one line.
+
+```{r}
+
+#Passes every column into the function, if a value is greater than zero, converts it to a 1, finds the sum of all of them and returns.
+apply(R, 2, function(x) { sum(ifelse(x > 0, 1, 0), na.rm = TRUE) } )
+
+```
+
+* Use the `split` function to create a list whose keys are the column number and values are the vector of the columns. Look at the last example in the documentation `?split`.
+
+```{r}
+#Creates list w/R columns as keys by splitting the data by the columns of R. 
+list_R_Columns = split(R, col(R), drop=TRUE)
+list_R_Columns
+```
+
+* In one statement, use the `lapply` function to create a list whose keys are the column number and values are themselves a list with keys: "min" whose value is the minimum of the column, "max" whose value is the maximum of the column, "pct_missing" is the proportion of missingness in the column and "first_NA" whose value is the row number of the first time the NA appears. Use the `which` function.
+
+```{r}
+list_R_Columns
+
+lapply(list_R_Columns, function(x){
+  
+  min = min(x, na.rm = TRUE)
+  max = max(x, na.rm = TRUE)
+  pct_missing = (sum(is.na(x)) / length(x)) * 100
+  first_NA = min(which(is.na(x)))
+  
+  list("min" = min, "max" = max, "pct_missing" = pct_missing, "first_NA" = first_NA)
+  } )
+
+```
+
+
+* Create a vector `v` consisting of a sample of 1,000 iid normal realizations with mean -10 and variance 10.
+
+```{r}
+
+v = rnorm(1000, mean = -10, sd = sqrt(10))
+v
+
+```
+
+* Find the average of `v` and the standard error of `v`.
+
+```{r}
+
+mean(v)
+sd(v)/sqrt(length(v))
+
+```
+
+* Find the 5%ile of `v` and use the `qnorm` function to compute what it theoretically should be.
+
+```{r}
+
+quantile(v, 0.05)
+qnorm(0.05, mean = -10, sd = sqrt(10), lower.tail = TRUE)
+
+```
+
+
+* Create a list named `my_list` with keys "A", "B", ... where the entries are arrays of size 1, 2 x 2, 3 x 3 x 3, etc. Fill the array with the numbers 1, 2, 3, etc. Make 8 entries.
+
+
+```{r}
+
+keys = c("A","B","C","D","E","F","G","H")
+
+my_list=list()
+for(i in 1 : length(keys)){
+  my_list[[keys[i]]] = array(seq(1,i), dim = c(rep(i ,i)))
+}
+
+
+```
+
+Test with the following uncomprehensive tests:
+
+
+```{r}
+#expect_equal(my_list$A, 1)
+expect_equal(my_list[[2]][, 1], 1 : 2)
+expect_equal(dim(my_list[["H"]]), rep(8, 8))
+```
+
+Run the following code:
+
+```{r}
+lapply(my_list, object.size)
+```
+
+Use `?object.size` to read about what these functions do. Then explain the output you see above. For the later arrays, does it make sense given the dimensions of the arrays?
+
+Answer here in English.
+#object.size provides an estimation of the amount of memory used to store an object in R. Yes, the increasing dimensions of the arrays = greater amount of memory storage required. 
+
+
+Now cleanup the namespace by deleting all stored objects and functions:
+
+```{r}
+
+?object.size
+rm(list = ls())
+
+```
+
+## Basic Binary Classification Modeling
+
+* Load the famous `iris` data frame into the namespace. Provide a summary of the columns and write a few descriptive sentences about the distributions using the code below and in English.
+
+```{r}
+iris
+
+#There are five columns, four of which are numerical variables (sepal length & width, petal length & width), and one which is categorical (species). 
+
+```
+
+The outcome metric is `Species`. This is what we will be trying to predict. However, we have only done binary classification in class (i.e. two classes). Thus the first order of business is to drop one class. Let's drop the level "virginica" from the data frame.
+
+```{r}
+
+virginica_Rows = which(iris$Species == "virginica")
+iris2 = iris[-(virginica_Rows), ]
+iris2
+
+```
+
+Now create a vector `y` that is length the number of remaining rows in the data frame whose entries are 0 if "setosa" and 1 if "versicolor".
+
+```{r}
+
+y = ifelse(iris2$Species == "versicolor", 1, 0)
+y  
+
+```
+
+* Fit a threshold model to `y` using the feature `Sepal.Length`. Try to write your own code to do this. What is the estimated value of the threshold parameter? What is the total number of errors this model makes?
+
+```{r}
+
+sepal_Lengths = iris2$Sepal.Length
+n = length(sepal_Lengths)
+p = ncol(iris2)
+
+w = rep(NA, nrow(iris2))
+
+if(is.null(w)){
+  w = rep(0, (p+1))
+}
+
+# sepal_Length_2_Species = cbind(x,y)
+# sepal_Length_2_Species
+# 
+# for(i in 1:p){
+#   for (j in 1:n){
+#     x_i = Xinput[i, ]
+#     yhat_i = ifelse(sum(x_i *w) > 0, 1, 0)
+#     y_i= y_binary[i]
+#     
+#     for(k in 1:(p+1)){
+#       
+#       w[j] = w[j] + (y_i - yhat_i) * x_i[j]
+#     }
+#   }
+# }
+
+
+
+
+```
+
+Does this make sense given the following summaries:
+
+```{r}
+summary(iris[iris$Species == "setosa", "Sepal.Length"])
+summary(iris[iris$Species == "virginica", "Sepal.Length"])
+```
+
+Write your answer here in English.
+
+TO-DO
+
+* What is the total number of errors this model makes (in-sample)?
+
+```{r}
+#TO-DO
+```
+
