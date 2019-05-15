@@ -1,0 +1,277 @@
+---
+title: "Lab 10"
+author: "Connor Brown"
+output: pdf_document
+date: "11:59PM May 12, 2019"
+---
+
+First load the tree-building package:
+
+```{r}
+options(java.parameters = "-Xmx4000m")
+pacman::p_install_gh("kapelner/YARF", subdir = "YARF", ref = "dev")
+```
+
+Let's take a look at the simulated sine curve data (i.e. the illustration I drew on the board last class)
+
+```{r}
+pacman::p_load(tidyverse)
+n_train = 500
+x_max = 10
+x_train = runif(n_train, 0, x_max)
+y_train = sin(x_train) + rnorm(n_train, 0, 0.3)
+ggplot(data.frame(x = x_train, y = y_train), aes(x, y)) + geom_point(lwd=0.6) 
+```
+
+create a test set from the this data generating process with size 1000.
+
+```{r}
+n_test = 1000
+x_test = runif(n_test, 0, x_max)
+y_test = sin(x_test) + rnorm(n_test, 0, 0.3)
+ggplot(data.frame(x = x_test, y = y_test), aes(x, y)) + geom_point(lwd = 0.6) 
+```
+
+
+Fit a linear model to this dataset and test out of sample to get an idea of the generalization error.
+
+```{r}
+linear_mod = lm(y_train ~ x_train)
+se_oos = sd(y_test - predict(linear_mod, data.frame(x_train = x_test)))
+se_oos
+```
+
+Fit a tree to this dataset where nodesize is 25.
+
+```{r}
+tree_mod = YARFCART(data.frame(x = x_train), y_train, nodesize = 25)
+```
+
+How many nodes and how deep is this tree?
+
+```{r}
+get_tree_num_nodes_leaves_max_depths(tree_mod)
+```
+
+Create an image of this tree's nodes and split rules.
+
+```{r}
+illustrate_trees(tree_mod, max_depth = 4)
+```
+
+Test this tree model's performance out of sample to get an idea of the generalization error.
+
+```{r}
+se_oos = sd(y_test - predict(tree_mod, data.frame(x = x_test)))
+se_oos
+```
+
+Fit a tree to this dataset where nodesize is 1 and test out of sample.
+
+```{r}
+tree_mod = YARFCART(data.frame(x = x_train), y_train, nodesize = 1)
+get_tree_num_nodes_leaves_max_depths(tree_mod)
+se_oos = sd(y_test - predict(tree_mod, data.frame(x = x_test)))
+se_oos
+```
+
+Create M = 200 bootstrap samples of the data and save in a list.
+
+```{r}
+M = 200
+bootstrap_x_train = list()
+bootstrap_y_train = list()
+for(i in 1:M){
+  bootstrap_indices = sample(1 : n_train, replace = TRUE, size = n_train)
+  bootstrap_x_train[[i]] = x_train[bootstrap_indices]
+  bootstrap_y_train[[i]] = y_train[bootstrap_indices]
+}
+```
+
+Create a bag of M trees model where nodesize = 5 (the regression default). Use the call of `YARFCART`.
+
+```{r}
+tree_mods = list()
+for (k in 1 : M){
+  tree_mods[[k]] = YARFCART(data.frame(x = bootstrap_x_train[[k]]), bootstrap_y_train[[k]], nodesize = 5, calculate_oob_error = FALSE)
+}
+```
+
+Test this bagged model out of sample.
+
+```{r}
+y_test_hats = matrix(NA, nrow = n_test, ncol = M)
+for(k in 1 : M){
+  y_test_hats[, k] = predict(tree_mods[[k]], data.frame(x = x_test))
+  
+}
+y_test_hats = rowMeans(y_test_hats)
+se_oos = sd(y_test - y_test_hats)
+se_oos
+```
+
+Using the bootstrapped samples, find the oob error. This is hard!
+
+```{r}
+#TO-DO
+```
+
+Fit a random forest model (RF) to the data. Report oob error.
+
+```{r}
+mod_bag = YARFBAG(x_train, y_train, num_trees = 500)
+mod_bag
+mod_rf = YARF(x_train, y_train, num_trees = 500)
+mod_rf
+
+cat("gain: ", (mod_rf$pseudo_rsq_oob - mod_bag$pseudo_rsq_oob) / mod_bag$pseudo_rsq_oob * 100, "%\n")
+```
+
+Test the RF model out of sample. Is this error lower than the bagged model? Is the error similar to its oob error?
+
+```{r}
+mse_bag = sum((y_test = predict(mod_bag, x_test))^2) / nrow(x_test)
+mse_rf = sum((y_test = predict(mod_rf, x_test))^2) / nrow(x_test)
+cat("gain: ", (mse_bag - mse_rf) / mse_bag * 100, "%\n")
+```
+
+Load the `diamonds' dataset. Sample 1,000 rows for training and 1,000 rows for testing.
+```{r}
+rm(list=ls())
+
+data(diamonds)
+head(diamonds)
+nrow(diamonds)
+
+num_trees = 500
+n_train = 1000
+
+training_indices = sample(1 : nrow(diamonds), n_train)
+diamonds_train = diamonds[training_indices, ]
+y_train = diamonds_train$price
+X_train = diamonds_train
+head(X_train)
+X_train$price = NULL
+
+
+test_indices = sample(setdiff(1 : nrow(diamonds), training_indices), 1000)
+diamonds_test = diamonds[test_indices, ]
+y_test = diamonds_test$price
+X_test = diamonds_test
+head(X_test)
+X_test$price = NULL
+```
+
+Build a linear model and test.
+
+```{r}
+linear_mod = lm(y_train ~ X_train)
+se_oos = sd(y_test - predict(linear_mod, data.frame(X_train = X_test)))
+se_oos
+```
+
+Build a bagged model and test. You can use `YARFBAG`.
+
+```{r}
+mod_bag = YARFBAG(X_train, y_train, num_trees = num_trees, calculate_oob_error = FALSE)
+y_hat_test_bag = predict(mod_bag, X_test)
+oos_conf_table_bag = table(y_test, y_hat_test_bag)
+oos_conf_table_bag
+miscl_err_bag = mean(y_test != y_hat_test_bag)
+miscl_err_bag
+```
+
+Build a RF model and test. You can use `YARF`.
+
+
+```{r}
+mod_rf = YARF(X_train, y_train, num_trees = num_trees, calculate_oob_error = FALSE)
+y_hat_test_rf = predict(mod_rf, X_test)
+oos_conf_table_rf = table(y_test, y_hat_test_rf)
+oos_conf_table_rf
+miscl_err_rf = mean(y_test != y_hat_test_rf)
+miscl_err_rf
+
+```
+
+Explain why the gains are small from linear regression -> bagged trees -> random Forests
+
+#TO-DO
+
+Use `mlr` to build a RF model that is optimally tuned for the hyperparameter `mtry` and test out of sample.
+
+```{r}
+
+pacman::p_load(mlr)
+modeling_task = makeRegrTask(data = X_test) #instantiate the task
+
+pacman::p_load(e1071)
+algorithm = makeLearner("regr.randomForest", predict.type = "response", par.vals = list(mtry = 3))
+
+all_lambdas = 2^(seq(-10, 10, by = 0.5))
+all_hyperparams = makeParamSet(
+  makeDiscreteParam(id = "mtry", default = 1, values = all_lambdas)
+)
+inner = makeResampleDesc("CV", iters = 3)
+lrn = makeTuneWrapper("regr.randomForest", 
+                      resampling = inner, 
+                      par.set = all_hyperparams, 
+                      control = makeTuneControlGrid(),
+                      measures = list(mmce))
+
+outer = makeResampleDesc("CV", iters = 5)
+r = resample(lrn, modeling_task, 
+            resampling = outer, 
+            extract = getTuneResult,
+            measures = list(mmce))
+
+r #overall estimate of oos error of the whole procedure if it were used on all of $\mathbb{D}$
+print(getNestedTuneResultsOptPathDf(r)) #results of each inner validation over all outer iterations
+r$extract #"winning" model for each outer iteration
+
+```
+
+Load the `nycflights13` data and join the weather table to airport in the four ways we learned about. 
+
+
+```{r}
+pacman::p_load(nycflights13, tidyverse, magrittr)
+data(weather)
+data(airports)
+head(weather)
+head(airports)
+
+#Re-name column in weather to match airport column
+weather %<>% rename(faa = origin)
+#Pair down datasets
+airports %<>% select(faa, lat, lon)
+airports
+weather %<>% select(faa, time_hour, temp, humid, wind_speed, pressure, wind_gust)
+
+#left join of weather to airport by faa
+airports
+airports_and_weather = left_join(airports, weather, by = "faa")
+airports_and_weather
+#right join
+airports
+airports_and_weather = right_join(airports, weather, by = "faa")
+airports_and_weather
+
+#drop 'ewr' airports and join with weather
+airports_without_EWR = airports %>%
+  filter(faa != "EWR")
+right_join(airports_without_EWR, weather, by = "faa") %>% sample_n(500)
+
+#inner join
+airports
+airports_and_weather = inner_join(airports, weather, by = "faa")
+airports_and_weather %>% sample_n(500)
+#full join
+airports_and_weather = full_join(airports, weather, by = "faa")
+airports_and_weather %>% sample_n(500) %>% arrange(faa)
+
+```
+
+Explain in English what each of these joins is doing.
+
+#TO-DO
