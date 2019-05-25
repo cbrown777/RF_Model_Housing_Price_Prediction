@@ -1,0 +1,456 @@
+---
+title: "final_project"
+author: "Connor Brown"
+date: "5/23/2019"
+output: pdf_document
+---
+
+```{r}
+rm(list=setdiff(ls(), "geocoded")) #Import Data and Load Packages
+set.seed(1001)
+pacman::p_load(dplyr, tidyr, magrittr, mlr, missForest)
+pacman::p_load(stringr)
+setwd("~/QC_Math_390.4_Spring_2019/labs")
+getwd()
+
+q_housing <- read.csv("housing_data_2016_2017.csv", header=TRUE, stringsAsFactors = FALSE) #Read the file in
+which(names(q_housing) == "approx_year_built")
+q_housing = q_housing[ , -seq(1, 28)] #Drop the first 28 irrelevant columns
+dim(q_housing)
+str(q_housing)
+summary(q_housing)
+
+lapply(q_housing, class) #See class type for all columns
+
+q_housing %<>%
+  select(-c(date_of_sale, url, model_type, num_half_bathrooms, listing_price_to_nearest_1000)) %>%
+  #Move sale_price last
+  select(-sale_price, everything()) %>%
+  mutate(community_district_num = factor(community_district_num)) %>% #Nominalize School District Number
+  mutate(sale_price =  as.numeric(gsub('[$,]', '', q_housing$sale_price))) %>% #convert sale price to numeric and drop '$'
+  #Convert maintenance_cost to numeric and drop '$'
+  mutate(maintenance_cost =  as.numeric(gsub('[$,]', '', q_housing$maintenance_cost))) %>%
+  #convert total_taxes to numeric and drop '$'
+  mutate(total_taxes =  as.numeric(gsub('[$,]', '', q_housing$total_taxes))) %>%
+  #convert parking_charges to numeric and drop '$'
+  mutate(parking_charges =  as.numeric(gsub('[$,]', '', q_housing$parking_charges))) %>%
+  #convert common_charges to numeric and drop '$'
+  mutate(common_charges =  as.numeric(gsub('[$,]', '', q_housing$common_charges))) %>%
+  #Fix spelling error in 'pct_tax_deductibl'
+  rename(pct_tax_deductible = pct_tax_deductibl)
+
+#Convert NA's to 0 for common_charges and maintenance_cost
+q_housing$common_charges[is.na(q_housing$common_charges)] <- 0
+q_housing$maintenance_cost[is.na(q_housing$maintenance_cost)] <- 0
+#Combine into one 
+q_housing %<>%
+  mutate(monthly_cost = common_charges + maintenance_cost) %>%
+  select(monthly_cost, everything(), -c(common_charges, maintenance_cost))
+#Convert 0's back to NA's in monthly cost
+q_housing$monthly_cost[q_housing$monthly_cost == 0] <- NA
+
+
+
+
+#Data Cleaning
+
+#Converting duplicate values to y or n
+unique(q_housing$cats_allowed)
+unique(q_housing$dogs_allowed)
+q_housing %<>%
+  mutate(cats_allowed = as.factor(cats_allowed)) %>%
+  mutate(dogs_allowed = as.factor(dogs_allowed))
+q_housing %<>%
+  mutate(cats_allowed = sub("yes", "y", cats_allowed)) %>%
+  mutate(cats_allowed = sub("no", "n", cats_allowed)) %>%
+  mutate(dogs_allowed = sub("yes", "y", dogs_allowed)) %>%
+  mutate(dogs_allowed = sub("no", "n", dogs_allowed)) %>%
+  mutate(dogs_allowed = sub("yes89", "y", dogs_allowed)) %>%
+  mutate(dogs_allowed = sub("y89", "y", dogs_allowed))
+unique(q_housing$cats_allowed)
+unique(q_housing$dogs_allowed)  
+
+class(q_housing$dogs_allowed)
+isTRUE(all.equal(q_housing$cats_allowed, q_housing$dogs_allowed)) #There are buildings that only allow one animal
+
+#Condense cats_allowed and dogs_allowed into one feature, animal_allowed.There isn't a significant difference in
+#predictive power between dog or cat being allowed. 
+q1 = as.data.frame(cbind(q_housing$dogs_allowed, q_housing$cats_allowed))
+q1$animal_allowed <- apply(q1, 1, FUN = function(x) if(x[1] == 'y' | x[2] == 'y') 'y' else 'n')
+q_housing = cbind(q_housing, q1$animal_allowed)
+colnames(q_housing)[colnames(q_housing)=="q1$animal_allowed"] <- "animal_allowed"
+rm(q1)
+
+q_housing %<>%
+  select(-c(cats_allowed, dogs_allowed)) %>%
+  select(approx_year_built, animal_allowed, everything())
+
+
+
+
+#Clean up fuel_type column
+q_housing %<>%
+  mutate(fuel_type = sub("Other", "other", fuel_type))
+unique(q_housing$fuel_type)
+
+
+
+
+#Clean up garage_exists column
+q_housing %<>%
+  mutate(garage_exists = sub("Underground", "y", garage_exists)) %>%
+  mutate(garage_exists = sub("Yes", "y", garage_exists)) %>%
+  mutate(garage_exists = sub("yes", "y", garage_exists)) %>%
+  mutate(garage_exists = sub("UG", "y", garage_exists)) %>%
+  mutate(garage_exists = sub("1", "y", garage_exists)) %>%
+  mutate(garage_exists = sub("eys", "y", garage_exists))
+#NA likely means there is none
+q_housing$garage_exists[is.na(q_housing$garage_exists)] <- 'n'
+unique(q_housing$garage_exists)
+
+q_housing %<>% 
+  select(approx_year_built, garage_exists, parking_charges, everything())
+
+#Adds feature if there is no garage, and no parking charges listed.
+#If a parking charge is listed but no garage is, it likely means there is a monthly fee for street parking. 
+q2 = as.data.frame(cbind(q_housing$garage_exists, q_housing$parking_charges))
+q2$no_garage_no_parking_charges <- apply(q2, 1, FUN = function(x) if(x[1] == 'n' & is.na(x[2])) 1 else 0)
+q_housing = cbind(q_housing, q2$no_garage_no_parking_charges)
+colnames(q_housing)[colnames(q_housing)=="q2$no_garage_no_parking_charges"] <- "no_garage_no_parking_charges"
+rm(q2)
+q_housing %<>% 
+  select(approx_year_built, garage_exists, parking_charges, no_garage_no_parking_charges, everything())
+
+
+
+
+#Clean up kitchen_type column
+q_housing %<>%
+  mutate(kitchen_type = sub("eat in", "eatin", kitchen_type)) %>%
+  mutate(kitchen_type = sub("Eat In", "eatin", kitchen_type)) %>%
+  mutate(kitchen_type = sub("Eat in", "eatin", kitchen_type)) %>%
+  mutate(kitchen_type = sub("efficiency kitchene", "efficiency", kitchen_type)) %>%
+  mutate(kitchen_type = sub("efficiency kitchen", "efficiency", kitchen_type)) %>%
+  mutate(kitchen_type = sub("efficiemcy", "efficiency", kitchen_type)) %>%
+  mutate(kitchen_type = sub("efficiency ktchen", "efficiency", kitchen_type)) %>%
+  mutate(kitchen_type = sub("Combo", "combo", kitchen_type))
+unique(q_housing$kitchen_type)
+
+
+
+
+#Even though NA probably means there are 0 bedrooms, I didn't want to make that assumption
+unique(q_housing$num_bedrooms)
+#Even though NA probably means there is 1 floor, I didn't want to make that assumption
+unique(q_housing$num_floors_in_building)
+
+
+
+
+summary(q_housing$total_taxes)
+hist(q_housing$total_taxes, breaks = 50)
+#There are some ridiculuously low numbers here, that are definitely inaccurate, so we'll use listwise deletion
+q_housing %<>% 
+  select(-total_taxes)
+
+
+
+
+#Converts sold homes to approximate age they were when sold, and unsold homes to current approximate age
+q_housing %<>%
+  mutate(years_old = ifelse(is.na(sale_price), 2019 - approx_year_built, 2017 - approx_year_built)) %>%
+  select(years_old, everything(), -approx_year_built)
+
+
+
+#Convert addresses to lat and long
+#load ggmap
+
+pacman::p_load(ggmap)
+
+
+#Activate my google API key for this session
+register_google(key = "AIzaSyAiqFbDDyvjrVKxgLg2vqDzjUYlsofVqfM")
+
+geocoded <- setNames(data.frame(matrix(ncol = 2, nrow = 2230)), c("lon", "lat"))
+
+# Loop through the addresses to get the latitude and longitude of each address and add it to the
+# geocoded dataframe in columns lat and lon
+
+
+#*****
+for(i in 1:nrow(q_housing)){
+  result <- geocode(q_housing$full_address_or_zip_code[i], output = "latlona", source = "google")
+  geocoded$lon[i] <- as.numeric(result[1])
+  geocoded$lat[i] <- as.numeric(result[2])
+}
+#*****
+rm(i)
+
+
+#Add columns from geocoded to q_housing
+q_housing %<>%
+  mutate(lon = geocoded$lon) %>%
+  mutate(lat = geocoded$lat)
+
+#Clean up
+summary(q_housing$lon)
+which(is.na(q_housing$lon))
+q_housing = q_housing[-c(804, 1679), ]
+summary(q_housing$lat)
+which(is.na(q_housing$lat))
+
+q_housing %<>%
+  select(-full_address_or_zip_code)
+
+
+
+
+#as.factor for all character columns
+q_housing %<>%
+  mutate(garage_exists = as.factor(garage_exists)) %>%
+  mutate(coop_condo = as.factor(coop_condo)) %>%
+  mutate(dining_room_type = as.factor(dining_room_type)) %>%
+  mutate(fuel_type = as.factor(fuel_type)) %>%
+  mutate(kitchen_type = as.factor(kitchen_type)) %>%
+  mutate(kitchen_type = as.factor(kitchen_type))
+
+lapply(q_housing, class) #See class type for all columns
+
+
+
+
+
+
+
+#****
+rm(fit, M, m1, plot1, X, Ximp, Xnew, y)
+rm(q_housing1)
+#****
+q_housing1 = q_housing
+
+
+#Filter out apts that dont have sale price
+q_housing1 %<>%
+  filter(!is.na(sale_price))
+nrow(q_housing1)
+
+
+
+#Missingness
+y = q_housing1$sale_price
+X = q_housing1
+q_housing1$sale_price = NULL
+head(X)
+length(y)
+
+M = tbl_df(apply(is.na(X), 2, as.numeric))
+colnames(M) = paste("is_missing_", colnames(X), sep = "")
+head(M)
+summary(M)
+ncol(M)
+
+M = tbl_df(t(unique(t(M))))
+
+M %<>% select_if(function(x){sum(x) > 0})
+colSums(M)
+
+M %<>%
+  select(is_missing_monthly_cost, is_missing_dining_room_type, is_missing_fuel_type, is_missing_kitchen_type, is_missing_num_floors_in_building)
+
+X %<>%
+  select(-c(parking_charges, pct_tax_deductible))
+
+pacman::p_load(missForest)
+Ximp = missForest(data.frame(X), sampsize = rep(75, ncol(X)))$ximp
+Xnew = data.frame(cbind(Ximp, M))
+
+Xnew %<>%
+  mutate(sqft_per_room = sq_footage / num_total_rooms)
+
+
+```
+
+
+
+
+```{r}
+#1)Regression Tree
+
+m1 = rpart(sale_price ~ ., data = Xnew, method = "anova") #Makes the Regression Tree
+m1
+par(xpd = TRUE)
+plot1 = rpart.plot(m1, type = 3, digits = 3, fallen.leaves = TRUE) 
+
+```
+
+
+
+
+```{r}
+#2)**OLS**
+
+ancova_mod = lm(sale_price ~ ., Xnew)
+coef(ancova_mod)
+summary(ancova_mod)$r.squared
+summary(ancova_mod)$sigma
+
+head(model.matrix(sale_price ~ ., Xnew))
+dim(model.matrix(sale_price ~ ., Xnew))
+summary(ancova_mod)
+
+```
+
+
+
+```{r}
+#3) Random Forest
+set.seed(1005)
+
+q_housing2 = q_housing
+
+#Filter out parking_charges, pct_tax_deductible like we did before
+q_housing2 %<>%
+  filter(!is.na(sale_price))%>%
+  select(-c(parking_charges, pct_tax_deductible))
+
+#Get random test and train indices
+n = nrow(q_housing2)
+K = 5 #i.e. the test set is 1/5th of the entire historical dataset
+test_indices = sample(1 : n, 1 / K * n)
+train_indices = setdiff(1 : n, test_indices)
+train_set = q_housing2[train_indices, ]
+test_set = q_housing2[test_indices, ]
+
+
+
+#Create Train Set with imputed missing x's with the y's included
+M2 = tbl_df(apply(is.na(train_set), 2, as.numeric))
+colnames(M2) = paste("is_missing_", colnames(train_set), sep = "")
+M2 = tbl_df(t(unique(t(M2))))
+M2 %<>% select_if(function(x){sum(x) > 0})
+
+colSums(M2)
+M2 %<>%
+  select(is_missing_monthly_cost, is_missing_dining_room_type, is_missing_fuel_type, is_missing_kitchen_type, is_missing_num_floors_in_building)
+
+pacman::p_load(missForest)
+Ximp2 = missForest(data.frame(train_set), sampsize = rep(75, ncol(train_set)))$ximp
+train_set_new = data.frame(cbind(Ximp2, M2))
+nrow(train_set_new)
+
+train_set_new %<>%
+  mutate(sqft_per_room = sq_footage / num_total_rooms)
+
+
+#Create Test Set with imputed missing x's with the y's NOT included
+y_test = test_set$sale_price
+test_set$sale_price = NULL
+
+
+M2 = tbl_df(apply(is.na(test_set), 2, as.numeric))
+colnames(M2) = paste("is_missing_", colnames(test_set), sep = "")
+M2 = tbl_df(t(unique(t(M2))))
+M2 %<>% select_if(function(x){sum(x) > 0})
+
+colSums(M2)
+M2 %<>%
+  select(is_missing_monthly_cost, is_missing_dining_room_type, is_missing_fuel_type, is_missing_kitchen_type, is_missing_num_floors_in_building)
+
+pacman::p_load(missForest)
+Ximp2 = missForest(data.frame(test_set), sampsize = rep(25, ncol(test_set)))$ximp
+test_set_new = data.frame(cbind(Ximp2, M2))
+nrow(test_set_new)
+
+test_set_new %<>%
+  mutate(sqft_per_room = sq_footage / num_total_rooms)
+
+
+
+
+
+#OOB RF
+pacman::p_load(randomForest)
+
+#Run RF on just the train data
+my_forest <- randomForest(sale_price~ ., data = train_set_new, ntree = 100, mtry = 6)
+#OOB R-sqrd and RMSE
+my_forest
+#OOB RMSE is $75858.86 and R^2 is 0.8213
+
+#Hold-out Test
+y_hat_oos <- predict(my_forest, test_set_new)
+oos_residuals = y_test - y_hat_oos           #y_tests - y_hats
+1 - sum(oos_residuals^2) / sum((y_test - mean(y_test))^2) #Hold-out R^2
+sqrt(mean(oos_residuals^2)) #Hold-out RMSE
+#Hold-out RMSE is 84970.92 and R^2 is 0.7747
+
+
+
+test_set_new_w_y = test_set_new %<>%
+  mutate(sale_price = y_test)
+
+
+
+
+
+
+
+#Use MLR to get best hyperparameters
+
+getParamSet("regr.randomForest")
+
+rf <- makeLearner("regr.randomForest", predict.type = "response", par.vals = list(ntree = 200, mtry = 3))
+rf$par.vals <- list( importance = TRUE )
+
+#set tunable parameters
+#grid search to find hyperparameters
+rf_param <- makeParamSet(
+makeIntegerParam("ntree",lower = 50, upper = 500),
+makeIntegerParam("mtry", lower = 3, upper = 10),
+makeIntegerParam("nodesize", lower = 10, upper = 50)
+)
+
+#let's do random search for 50 iterations
+rancontrol <- makeTuneControlRandom(maxit = 50L)
+
+#set 3 fold cross validation
+set_cv <- makeResampleDesc("CV",iters = 3L)
+
+#hypertuning
+regr_task = makeRegrTask('train_set_new',train_set_new, 'sale_price')
+
+rf_tune <- tuneParams(learner = rf, resampling = set_cv, task = regr_task, par.set = rf_param, control = rancontrol)
+
+
+#best parameters
+rf_tune$x
+
+#Build Production Model with these parameters using hyperparameters for modeling
+rf.tree <- setHyperPars(rf, par.vals = rf_tune$x)
+
+
+regr_task2 = makeRegrTask('Xnew', Xnew, 'sale_price')
+
+#train the Final Production model on ALL the data, which is in Xnew
+rforest <- train(rf.tree, regr_task2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
