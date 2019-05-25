@@ -1,0 +1,37 @@
+---
+title: "get_coordinates"
+author: "Connor Brown"
+date: "5/25/2019"
+output: pdf_document
+---
+
+
+```{r}
+
+#Convert addresses to lat and long
+#load ggmap
+
+pacman::p_load(ggmap)
+
+#Activate my google API key for this session
+register_google(key = "AIzaSyAiqFbDDyvjrVKxgLg2vqDzjUYlsofVqfM")
+
+geocoded <- setNames(data.frame(matrix(ncol = 2, nrow = 528)), c("lon", "lat"))
+
+# Loop through the addresses to get the latitude and longitude of each address and add it to the
+# geocoded dataframe in columns lat and lon
+
+
+#*****
+for(i in 1:nrow(q_housing1)){
+  result <- geocode(q_housing1$full_address_or_zip_code[i], output = "latlona", source = "google")
+  geocoded$lon[i] <- as.numeric(result[1])
+  geocoded$lat[i] <- as.numeric(result[2])
+}
+#*****
+
+rm(i)
+
+
+
+```
