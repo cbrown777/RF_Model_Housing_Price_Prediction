@@ -6,7 +6,7 @@ output: pdf_document
 ---
 
 ```{r}
-rm(list=setdiff(ls(), "geocoded")) #Import Data and Load Packages
+rm(list = ls()) #Import Data and Load Packages
 set.seed(1001)
 pacman::p_load(dplyr, tidyr, magrittr, mlr, missForest)
 pacman::p_load(stringr)
@@ -362,14 +362,14 @@ pacman::p_load(randomForest)
 my_forest <- randomForest(sale_price~ ., data = train_set_new, ntree = 100, mtry = 6)
 #OOB R-sqrd and RMSE
 my_forest
-#OOB RMSE is $75858.86 and R^2 is 0.8213
+#OOB RMSE is $72344.65 and R^2 is 0.8415
 
 #Hold-out Test
 y_hat_oos <- predict(my_forest, test_set_new)
 oos_residuals = y_test - y_hat_oos           #y_tests - y_hats
 1 - sum(oos_residuals^2) / sum((y_test - mean(y_test))^2) #Hold-out R^2
 sqrt(mean(oos_residuals^2)) #Hold-out RMSE
-#Hold-out RMSE is 84970.92 and R^2 is 0.7747
+#Hold-out RMSE is 74378.61 and R^2 is 0.786
 
 
 
