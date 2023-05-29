@@ -1,7 +1,6 @@
 ---
 title: "final_project"
 author: "Connor Brown"
-date: "5/23/2019"
 output: pdf_document
 ---
 
